@@ -1,116 +1,72 @@
-'use strict';
-
-const line = require('@line/bot-sdk');
 const express = require('express');
-const config = require('./config.json');
+const line = require('@line/bot-sdk');
+const axios = require('axios');
 
-// create LINE SDK client
-const client = new line.messagingApi.MessagingApiClient(config);
+const config = {
+  channelAccessToken: 'VW1gH/VdSkDjIFN8FiKAk6QYqECb9IStup5QNk2uDS099hTYoQbl0h3RNGdtcqm6qRCN+yeMQksPvV69DqL33c9Ud8Mpk3eMA7mTWO00PgHx1l8A8EL4Vv0vRvnLvNX3YOIRDu4f9gUUz2Y0M300igdB04t89/1O/w1cDnyilFU=',
+  channelSecret: '4ab1b547315610ff011cfc5d9a362725',
+};
 
 const app = express();
 
-// webhook callback
+// LINE middleware
 app.post('/webhook', line.middleware(config), (req, res) => {
-  // req.body.events should be an array of events
-  if (!Array.isArray(req.body.events)) {
-    return res.status(500).end();
-  }
-  // handle events separately
-  Promise.all(req.body.events.map(event => {
-    console.log('event', event);
-    return handleEvent(event);
-  }))
-    .then(() => res.end())
+  Promise.all(req.body.events.map(handleEvent))
+    .then(() => res.status(200).end())
     .catch((err) => {
-      console.error(err);
+      console.error('Webhook error:', err);
       res.status(500).end();
     });
 });
 
-// simple reply function
-const replyText = (replyToken, text, quoteToken) => {
-  return client.replyMessage({
-    replyToken,
-    messages: [{
+const client = new line.Client(config);
+
+// 處理事件
+async function handleEvent(event) {
+  if (event.type !== 'message' || event.message.type !== 'text') {
+    return;
+  }
+
+  const userMessage = event.message.text;
+  const userId = event.source.userId;
+
+  // ✅ 根據關鍵字自動貼標籤
+  if (userMessage === '我要報名') {
+    const tagId = '你要貼的tagId'; // ← 改成你的 tagId
+    await tagUser(userId, tagId);
+    return client.replyMessage(event.replyToken, {
       type: 'text',
-      text,
-      quoteToken
-    }]
+      text: '已為你貼上標籤 🙌',
+    });
+  }
+
+  // ✅ 一般回應
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: `你說的是：「${userMessage}」`,
   });
-};
+}
 
-// callback function to handle a single event
-function handleEvent(event) {
-  switch (event.type) {
-    case 'message':
-      const message = event.message;
-      switch (message.type) {
-        case 'text':
-          return handleText(message, event.replyToken);
-        case 'image':
-          return handleImage(message, event.replyToken);
-        case 'video':
-          return handleVideo(message, event.replyToken);
-        case 'audio':
-          return handleAudio(message, event.replyToken);
-        case 'location':
-          return handleLocation(message, event.replyToken);
-        case 'sticker':
-          return handleSticker(message, event.replyToken);
-        default:
-          throw new Error(`Unknown message: ${JSON.stringify(message)}`);
+// ✅ 自動幫用戶貼標籤的函式
+async function tagUser(userId, tagId) {
+  try {
+    await axios.post(
+      `https://api.line.me/v2/bot/user/${userId}/tag/${tagId}`,
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${config.channelAccessToken}`,
+        },
       }
-
-    case 'follow':
-      return replyText(event.replyToken, 'Got followed event');
-
-    case 'unfollow':
-      return console.log(`Unfollowed this bot: ${JSON.stringify(event)}`);
-
-    case 'join':
-      return replyText(event.replyToken, `Joined ${event.source.type}`);
-
-    case 'leave':
-      return console.log(`Left: ${JSON.stringify(event)}`);
-
-    case 'postback':
-      let data = event.postback.data;
-      return replyText(event.replyToken, `Got postback: ${data}`);
-
-    case 'beacon':
-      const dm = `${Buffer.from(event.beacon.dm || '', 'hex').toString('utf8')}`;
-      return replyText(event.replyToken, `${event.beacon.type} beacon hwid : ${event.beacon.hwid} with device message = ${dm}`);
-
-    default:
-      throw new Error(`Unknown event: ${JSON.stringify(event)}`);
+    );
+    console.log(`已貼標籤 ${tagId} 給使用者 ${userId}`);
+  } catch (err) {
+    console.error('貼標籤失敗：', err.response?.data || err.message);
   }
 }
 
-function handleText(message, replyToken) {
-  return replyText(replyToken, message.text, message.quoteToken);
-}
-
-function handleImage(message, replyToken) {
-  return replyText(replyToken, 'Got Image');
-}
-
-function handleVideo(message, replyToken) {
-  return replyText(replyToken, 'Got Video');
-}
-
-function handleAudio(message, replyToken) {
-  return replyText(replyToken, 'Got Audio');
-}
-
-function handleLocation(message, replyToken) {
-  return replyText(replyToken, 'Got Location');
-}
-
-function handleSticker(message, replyToken) {
-  return replyText(replyToken, 'Got Sticker');
-}
-
-const port = config.port;
+// 啟動伺服器
+const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`listening on ${port}`);
 });
